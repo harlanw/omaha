@@ -1,0 +1,23 @@
+#!/usr/bin/python3
+
+import sys
+import time
+
+from sms import usb
+
+def run():
+	sms.init()
+
+	while (True):
+		for line in sys.stdin:
+			raw = line.split()
+			cmd = raw[0]
+			num = raw[1]
+			body = " ".join(raw[2:])
+			print(body)
+			sys.stdout.flush()
+			sms.send(num, body)
+
+		time.sleep(0.1)
+
+__name__ == '__main__' and run()

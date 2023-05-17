@@ -1,0 +1,180 @@
+diff -Naur a/arch/arm/include/asm/arch-am33xx/hardware_am33xx.h b/arch/arm/include/asm/arch-am33xx/hardware_am33xx.h
+--- a/arch/arm/include/asm/arch-am33xx/hardware_am33xx.h	2018-12-22 20:03:08.677734296 -0800
++++ b/arch/arm/include/asm/arch-am33xx/hardware_am33xx.h	2018-12-22 22:16:36.067628147 -0800
+@@ -60,6 +60,7 @@
+ 
+ /* RTC base address */
+ #define RTC_BASE			0x44E3E000
++#define RTC_OSC				(RTC_BASE + 0x0054) /* RTC_OSC_REG */
+ 
+ /* OTG */
+ #define USB0_OTG_BASE			0x47401000
+diff -Naur a/arch/arm/include/asm/arch-am33xx/sys_proto.h b/arch/arm/include/asm/arch-am33xx/sys_proto.h
+--- a/arch/arm/include/asm/arch-am33xx/sys_proto.h	2018-12-22 20:03:08.678734284 -0800
++++ b/arch/arm/include/asm/arch-am33xx/sys_proto.h	2018-12-22 22:17:14.242150900 -0800
+@@ -46,4 +46,5 @@
+ void enable_usb_clocks(int index);
+ void disable_usb_clocks(int index);
+ void do_board_detect(void);
++void rtc32k_enable(void);
+ u32 get_sys_clk_index(void);
+diff -Naur a/arch/arm/mach-omap2/am33xx/board.c b/arch/arm/mach-omap2/am33xx/board.c
+--- a/arch/arm/mach-omap2/am33xx/board.c	2018-12-22 20:04:17.956868188 -0800
++++ b/arch/arm/mach-omap2/am33xx/board.c	2018-12-22 22:18:17.970354187 -0800
+@@ -326,17 +326,17 @@
+ {
+ }
+ 
+-#if defined(CONFIG_SPL_AM33XX_ENABLE_RTC32K_OSC)
+-static void rtc32k_enable(void)
+-{
+-	struct davinci_rtc *rtc = (struct davinci_rtc *)RTC_BASE;
+-
+-	rtc32k_unlock(rtc);
+-
+-	/* Enable the RTC 32K OSC by setting bits 3 and 6. */
+-	writel((1 << 3) | (1 << 6), &rtc->osc);
+-}
+-#endif
++//#if defined(CONFIG_SPL_AM33XX_ENABLE_RTC32K_OSC)
++//static void rtc32k_enable(void)
++//{
++//	struct davinci_rtc *rtc = (struct davinci_rtc *)RTC_BASE;
++//
++//	rtc32k_unlock(rtc);
++//
++//	/* Enable the RTC 32K OSC by setting bits 3 and 6. */
++//	writel((1 << 3) | (1 << 6), &rtc->osc);
++//}
++//#endif
+ 
+ static void uart_soft_reset(void)
+ {
+diff -Naur a/arch/arm/mach-omap2/hwinit-common.c b/arch/arm/mach-omap2/hwinit-common.c
+--- a/arch/arm/mach-omap2/hwinit-common.c	2018-12-22 20:04:17.957868175 -0800
++++ b/arch/arm/mach-omap2/hwinit-common.c	2018-12-22 22:19:26.466497868 -0800
+@@ -131,6 +131,16 @@
+ }
+ 
+ /**
++ * rtc32k_enable() - Function to unlock RTC registers
++ *
++ * Function to unlock RTC registers (see: RTC_SS section of the TRM). This
++ * is expected to be overridden in the SoC family board file where desired.
++ */
++void __weak rtc32k_enable(void)
++{
++}
++
++/**
+  * vcores_init() - Assign omap_vcores based on board
+  *
+  * Function to pick the vcores based on board. This is expected to be
+diff -Naur a/board/ti/am335x/board.c b/board/ti/am335x/board.c
+--- a/board/ti/am335x/board.c	2018-12-22 20:04:18.002867613 -0800
++++ b/board/ti/am335x/board.c	2018-12-22 22:25:10.282199580 -0800
+@@ -28,6 +28,7 @@
+ #include <asm/omap_common.h>
+ #include <asm/omap_sec_common.h>
+ #include <asm/omap_mmc.h>
++#include <asm/davinci_rtc.h>
+ #include <i2c.h>
+ #include <miiphy.h>
+ #include <cpsw.h>
+@@ -608,11 +609,60 @@
+ };
+ #endif
+ 
++#if defined(CONFIG_SPL_AM33XX_ENABLE_RTC32K_OSC)
++void rtc32k_enable(void)
++{
++	struct davinci_rtc *rtc = (struct davinci_rtc *)RTC_BASE;
++
++	/*
++	 * Unlock the RTC's registers.  For more details please see the
++	 * RTC_SS section of the TRM.  In order to unlock we need to
++	 * write these specific values (keys) in this order.
++	 */
++	writel(RTC_KICK0R_WE, &rtc->kick0r);
++	writel(RTC_KICK1R_WE, &rtc->kick1r);
++
++	if (board_is_pb()) {
++		/* 6: EN_32KCLK */
++		/* 3: SEL_32KCLK_SRC 0: internal, 1: external */
++		writel((0 << 3) | (1 << 6), &rtc->osc);
++	} else {
++		/* Enable the RTC 32K OSC by setting bits 3 and 6. */
++		writel((1 << 3) | (1 << 6), &rtc->osc);
++	}
++}
++#endif
++
+ /*
+  * Basic board specific setup.  Pinmux has been handled already.
+  */
+ int board_init(void)
+ {
++	u32 sys_reboot, sys_rtc_osc;
++
++	sys_reboot = readl(PRM_RSTST);
++	if (sys_reboot & (1 << 9))
++		puts("Reset Source: IcePick reset has occurred.\n");
++
++	if (sys_reboot & (1 << 5))
++		puts("Reset Source: Global external warm reset has occurred.\n");
++
++	if (sys_reboot & (1 << 4))
++		puts("Reset Source: watchdog reset has occurred.\n");
++
++	if (sys_reboot & (1 << 1))
++		puts("Reset Source: Global warm SW reset has occurred.\n");
++
++	if (sys_reboot & (1 << 0))
++		puts("Reset Source: Power-on reset has occurred.\n");
++
++	sys_rtc_osc = readl(RTC_OSC);
++	if (sys_rtc_osc & (1 << 3)) {
++		puts("RTC 32KCLK Source: External.\n");
++	} else {
++		puts("RTC 32KCLK Source: Internal.\n");
++	}
++
+ #if defined(CONFIG_HW_WATCHDOG)
+ 	hw_watchdog_init();
+ #endif
+@@ -727,6 +777,11 @@
+ 		name = "BBG1";
+ 	if (board_is_bben())
+ 		name = "BBEN";
++
++	if (board_is_pb()) {
++		puts("Model: BeagleBoard.org PocketBeagle\n");
++	}
++
+ 	set_board_info_env(name);
+ 
+ 	/*
+@@ -872,6 +927,7 @@
+ 	(defined(CONFIG_SPL_ETH_SUPPORT) && defined(CONFIG_SPL_BUILD))
+ 
+ #ifdef CONFIG_DRIVER_TI_CPSW
++if (!board_is_pb()) {
+ 	if (board_is_bone() || board_is_bone_lt() || board_is_bben() ||
+ 	    board_is_idk()) {
+ 		writel(MII_MODE_ENABLE, &cdev->miisel);
+@@ -894,6 +950,7 @@
+ 		printf("Error %d registering CPSW switch\n", rv);
+ 	else
+ 		n += rv;
++}
+ #endif
+ 
+ 	/*
+@@ -938,6 +995,7 @@
+ #ifdef CONFIG_SPL_LOAD_FIT
+ int board_fit_config_name_match(const char *name)
+ {
++	// FIXME: Currently unused
+ 	if (board_is_gp_evm() && !strcmp(name, "am335x-evm"))
+ 		return 0;
+ 	else if (board_is_bone() && !strcmp(name, "am335x-bone"))

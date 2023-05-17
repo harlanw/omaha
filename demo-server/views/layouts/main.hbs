@@ -1,0 +1,138 @@
+<html>
+	<head>
+		<title></title>
+		<link rel='stylesheet' type='text/css' href='reset.css'/>
+		<link rel='stylesheet' type='text/css' href='style.css'/>
+		<script type="text/javascript" src="/socket.io/socket.io.js"></script>
+		<script type="text/javascript" src="/script/jquery-3.4.1.min.js"></script>
+		<script>
+			function clock() {
+				var date = new Date();
+				var _clock = document.getElementById('clock');
+
+				var hh = date.getHours() % 12;
+				var mm = date.getMinutes()
+				var ss = date.getSeconds()
+
+				mm = (mm < 10) ? '0' + mm : mm;
+				ss = (ss < 10) ? '0' + ss : ss;
+
+				_clock.innerHTML = hh + ':' + mm + ':' + ss;
+			}
+
+			function battery() {
+				if (typeof battery.state == 'undefined') {
+					battery.state = 2;
+					battery.img = document.getElementById('battery');
+				}
+
+				battery.img.src = 'image/bat' + battery.state.toString() + '.png';
+
+				++battery.state;
+				if (battery.state == 5) {
+					battery.state = 0;
+				}
+			}
+
+			function main() {
+				clock();
+				setInterval(clock, 500);
+				battery();
+				setInterval(battery, 800);
+
+				var messages = document.getElementById('messages');
+				messages.scrollTop = messages.scrollHeight;
+
+				var socket = io();
+
+				socket.on('newSMSMessage', function(msg) {
+					var messages = document.getElementById('messages');
+					var avatar = (msg.type == 'r') ? 'avatar.png' : 'me.png';
+					var message = ""
+						+	"<div class='message'>"
+						+		"<div class='avatar'>"
+						+			"<img src='image/" + avatar + "'/>"
+						+		"</div>"
+						+		"<div class='body'>"
+						+			"<p class='foo " + msg.type + "'>" + msg.body + "</p>"
+						+			"<p class='bar'>2:30:30</p>"
+						+		"</div>"
+						+	"</div>";
+
+					messages.innerHTML += message;
+					messages.scrollTop = messages.scrollHeight;
+				});
+
+				socket.on('newEmailEvent', function(sbj) {
+					$('#email > span').text(sbj)
+					$('#email').fadeIn(200, function() {
+						$(this).delay(5000).fadeOut(200);
+					});
+				})
+
+				socket.on('newHIDEvent', function(hidv) {
+					if (hidv.state == 0) {
+						const txt = $('#input');
+						const val = txt.val();
+
+						var to_write = '';
+
+						switch (hidv.key) {
+							case 'DEL':
+								to_write = val.slice(0, -1);
+								break;
+							case 'RET':
+								console.log(val);
+								socket.emit('sendSMSMessage', { body: val });
+
+								var messages = document.getElementById('messages');
+								var message = ""
+									+	"<div class='message'>"
+									+		"<div class='avatar'>"
+									+			"<img src='image/me.png'/>"
+									+		"</div>"
+									+		"<div class='body'>"
+									+			"<p class='foo s'>" + val + "</p>"
+									+			"<p class='bar'>2:30:30</p>"
+									+		"</div>"
+									+	"</div>";
+								messages.innerHTML += message;
+								messages.scrollTop = messages.scrollHeight;
+
+								break;
+							default:
+								to_write = val + hidv.key.toLowerCase();
+						}
+						txt.val(to_write);
+					}
+				});
+
+				/*var last = 0;
+				socket.on('asd', function(msg) {
+					if (last != msg) {
+						$('#host > span').fadeOut(200, function() {
+							$(this).text(' ' + msg).fadeIn(200);
+						});
+						last = msg;
+					}
+				});*/
+			}
+
+			window.onload = function() { main(); }
+		</script>
+	</head>
+	<body>
+		<header>
+			<div id='host'>Omaha<span></span></div>
+			<div id='icons'>
+				<img src='image/wifi.png'/>
+				<img src='image/sig.png'/>
+				<img id='battery' src='image/bat0.png'/>
+			</div>
+			<div id='clock'></div>
+			<div style="clear: both;"></div>
+		</header>
+		{{{body}}}
+	<div id='email'><img src='image/email.png'/><span></span></div>
+	</body>
+</html>
